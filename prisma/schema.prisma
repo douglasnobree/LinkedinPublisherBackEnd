@@ -1,0 +1,281 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// User & Authentication
+// ==========================================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  avatarUrl String?
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  linkedinProfile LinkedinProfile?
+  contents        Content[]
+  schedules       Schedule[]
+  analytics       Analytics[]
+
+  @@map("users")
+}
+
+model LinkedinProfile {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  linkedinId     String   @unique
+  accessToken    String
+  refreshToken   String?
+  tokenExpiresAt DateTime
+  profileUrl     String?
+  headline       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("linkedin_profiles")
+}
+
+enum Role {
+  USER
+  ADMIN
+  EDITOR
+}
+
+// ==========================================
+// Content Management
+// ==========================================
+
+model Content {
+  id           String        @id @default(uuid())
+  userId       String
+  theme        String
+  outline      String?
+  rawContent   String?
+  finalContent String?
+  persona      Persona       @default(GENERAL)
+  status       ContentStatus @default(DRAFT)
+  version      Int           @default(1)
+  metadata     Json?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schedule  Schedule?
+  analytics Analytics?
+  abTests   ABTest[]
+  jobs      Job[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("contents")
+}
+
+enum ContentStatus {
+  DRAFT
+  GENERATING
+  REVIEW
+  SCHEDULED
+  PUBLISHED
+  FAILED
+}
+
+enum Persona {
+  GENERAL
+  TECH
+  FOUNDER
+  RECRUITER
+}
+
+// ==========================================
+// Scheduling
+// ==========================================
+
+model Schedule {
+  id          String         @id @default(uuid())
+  userId      String
+  contentId   String         @unique
+  scheduledAt DateTime
+  publishedAt DateTime?
+  status      ScheduleStatus @default(PENDING)
+  retryCount  Int            @default(0)
+  lastError   String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledAt])
+  @@index([status])
+  @@map("schedules")
+}
+
+enum ScheduleStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// ==========================================
+// Analytics
+// ==========================================
+
+model Analytics {
+  id          String   @id @default(uuid())
+  userId      String
+  contentId   String   @unique
+  postId      String? // LinkedIn post ID
+  impressions Int      @default(0)
+  likes       Int      @default(0)
+  comments    Int      @default(0)
+  shares      Int      @default(0)
+  clicks      Int      @default(0)
+  engagement  Float    @default(0)
+  fetchedAt   DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@map("analytics")
+}
+
+// ==========================================
+// A/B Testing
+// ==========================================
+
+model ABTest {
+  id          String       @id @default(uuid())
+  contentId   String
+  variant     String // A, B, C...
+  content     String
+  impressions Int          @default(0)
+  engagement  Float        @default(0)
+  isWinner    Boolean      @default(false)
+  status      ABTestStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  contentRef Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@index([contentId])
+  @@map("ab_tests")
+}
+
+enum ABTestStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+// ==========================================
+// Job Queue Tracking
+// ==========================================
+
+model Job {
+  id          String    @id @default(uuid())
+  contentId   String?
+  type        JobType
+  status      JobStatus @default(PENDING)
+  payload     Json?
+  result      Json?
+  error       String?
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  processedAt DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  content Content? @relation(fields: [contentId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([type])
+  @@map("jobs")
+}
+
+enum JobType {
+  GENERATE_OUTLINE
+  GENERATE_CONTENT
+  POLISH_CONTENT
+  PUBLISH_LINKEDIN
+  FETCH_ANALYTICS
+  AUTO_COMMENT
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  RETRYING
+}
+
+// ==========================================
+// Prompt Templates
+// ==========================================
+
+model PromptTemplate {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  template    String
+  version     Int      @default(1)
+  isActive    Boolean  @default(true)
+  variables   String[] // List of required variables
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("prompt_templates")
+}
+
+// ==========================================
+// Feature Flags
+// ==========================================
+
+model FeatureFlag {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  description String?
+  isEnabled   Boolean  @default(false)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("feature_flags")
+}
+
+// ==========================================
+// Audit Log
+// ==========================================
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  oldValue  Json?
+  newValue  Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
