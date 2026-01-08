@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Body,
   UseGuards,
   Req,
   Res,
@@ -14,6 +15,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { CurrentUser, CurrentUserData } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -34,12 +36,12 @@ export class AuthController {
   @UseGuards(AuthGuard('linkedin'))
   @ApiOperation({ summary: 'LinkedIn OAuth callback' })
   async linkedinCallback(@Req() req: any, @Res() res: Response) {
-    const { accessToken, user } = await this.authService.generateTokens(req.user);
+    const { accessToken, refreshToken, user } = await this.authService.generateTokens(req.user);
 
     const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000');
     
-    // Redirect to frontend with token
-    res.redirect(`${frontendUrl}/auth/callback?token=${accessToken}`);
+    // Redirect to frontend with tokens
+    res.redirect(`${frontendUrl}/auth/callback?token=${accessToken}&refreshToken=${refreshToken}`);
   }
 
   @Get('me')
@@ -58,11 +60,33 @@ export class AuthController {
     return this.authService.refreshLinkedInToken(user.id);
   }
 
+  @Post('refresh')
+  @ApiOperation({ summary: 'Refresh access token using refresh token' })
+  async refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refreshAccessToken(dto.refreshToken);
+  }
+
   @Post('logout')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Logout user' })
-  logout(@Res() res: Response) {
-    res.status(HttpStatus.OK).json({ message: 'Logged out successfully' });
+  async logout(
+    @CurrentUser() user: CurrentUserData,
+    @Body() body?: { refreshToken?: string },
+    @Res() res?: Response,
+  ) {
+    // Revoke refresh token if provided
+    if (body?.refreshToken) {
+      await this.authService.revokeRefreshToken(body.refreshToken);
+    } else {
+      // Revoke all user tokens
+      await this.authService.revokeAllUserTokens(user.id);
+    }
+
+    if (res) {
+      res.status(HttpStatus.OK).json({ message: 'Logged out successfully' });
+    } else {
+      return { message: 'Logged out successfully' };
+    }
   }
 }

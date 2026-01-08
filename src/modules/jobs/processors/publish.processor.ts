@@ -44,8 +44,12 @@ export class PublishProcessor extends WorkerHost {
         throw new Error('No final content to publish');
       }
 
-      // Publish to LinkedIn
-      const post = await this.linkedinService.publishPost(userId, content.finalContent);
+      // Publish to LinkedIn (with image if available)
+      const post = await this.linkedinService.publishPost(
+        userId,
+        content.finalContent,
+        content.imageUrl || undefined,
+      );
 
       // Update content status
       await this.contentService.updateStatus(contentId, ContentStatus.PUBLISHED);

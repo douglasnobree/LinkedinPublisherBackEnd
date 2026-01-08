@@ -5,6 +5,9 @@ import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import * as session from 'express-session';
 import * as passport from 'passport';
+import { json, urlencoded } from 'express';
+import * as express from 'express';
+import { join } from 'path';
 import { AppModule } from './app.module';
 import { LoggerService } from './common/services/logger.service';
 
@@ -18,10 +21,29 @@ async function bootstrap() {
 
   app.useLogger(logger);
 
+  // Increase body size limit for image uploads (50MB)
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ extended: true, limit: '50mb' }));
+
   // Security
-  app.use(helmet());
+  const frontendUrl = configService.get('FRONTEND_URL', 'http://localhost:3000');
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          imgSrc: ["'self'", 'data:', 'blob:', frontendUrl, 'http://localhost:3001', 'https:'],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
+          fontSrc: ["'self'", 'https:', 'data:'],
+          connectSrc: ["'self'", frontendUrl, 'http://localhost:3001', 'https:'],
+        },
+      },
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.enableCors({
-    origin: configService.get('FRONTEND_URL', 'http://localhost:3000'),
+    origin: frontendUrl,
     credentials: true,
   });
 
@@ -55,6 +77,18 @@ async function bootstrap() {
       transform: true,
       transformOptions: {
         enableImplicitConversion: true,
+      },
+    }),
+  );
+
+  // Serve static files (uploaded images) with CORS
+  app.use(
+    '/uploads',
+    express.static(join(process.cwd(), 'uploads'), {
+      setHeaders: (res) => {
+        res.set('Access-Control-Allow-Origin', frontendUrl);
+        res.set('Access-Control-Allow-Credentials', 'true');
+        res.set('Cache-Control', 'public, max-age=31536000');
       },
     }),
   );

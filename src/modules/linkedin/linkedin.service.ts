@@ -51,32 +51,68 @@ export class LinkedInService {
     return profile.accessToken;
   }
 
-  async publishPost(userId: string, content: string): Promise<LinkedInPost> {
+  /**
+   * Upload image to LinkedIn and get asset URN
+   */
+  async uploadImage(userId: string, imageUrl: string): Promise<string> {
     const accessToken = await this.getAccessToken(userId);
     const profile = await this.prisma.linkedinProfile.findUnique({
       where: { userId },
     });
 
     try {
-      // Get person URN
-      const personUrn = `urn:li:person:${profile!.linkedinId}`;
+      let imageBuffer: Buffer;
+      let contentType = 'image/png';
 
-      // Create post using UGC Post API
-      const response = await this.httpClient.post(
-        '/ugcPosts',
+      // Check if imageUrl is a data URL (base64)
+      if (imageUrl.startsWith('data:image/')) {
+        const matches = imageUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+        if (matches) {
+          contentType = `image/${matches[1]}`;
+          imageBuffer = Buffer.from(matches[2], 'base64');
+        } else {
+          throw new BadRequestException('Invalid base64 image format');
+        }
+      } else {
+        // Check if it's a local file path
+        if (imageUrl.startsWith('/uploads/')) {
+          const fs = require('fs');
+          const path = require('path');
+          const filePath = path.join(process.cwd(), imageUrl);
+          
+          if (!fs.existsSync(filePath)) {
+            throw new BadRequestException('Image file not found');
+          }
+          
+          imageBuffer = fs.readFileSync(filePath);
+          const ext = path.extname(filePath).toLowerCase();
+          contentType = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+                       ext === '.png' ? 'image/png' :
+                       ext === '.gif' ? 'image/gif' :
+                       ext === '.webp' ? 'image/webp' : 'image/png';
+        } else {
+          // Download image from URL
+          const imageResponse = await axios.get(imageUrl, {
+            responseType: 'arraybuffer',
+          });
+          imageBuffer = Buffer.from(imageResponse.data);
+          contentType = imageResponse.headers['content-type'] || 'image/png';
+        }
+      }
+
+      // Register upload
+      const registerResponse = await this.httpClient.post(
+        '/assets?action=registerUpload',
         {
-          author: personUrn,
-          lifecycleState: 'PUBLISHED',
-          specificContent: {
-            'com.linkedin.ugc.ShareContent': {
-              shareCommentary: {
-                text: content,
+          registerUploadRequest: {
+            recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+            owner: `urn:li:person:${profile!.linkedinId}`,
+            serviceRelationships: [
+              {
+                relationshipType: 'OWNER',
+                identifier: 'urn:li:userGeneratedContent',
               },
-              shareMediaCategory: 'NONE',
-            },
-          },
-          visibility: {
-            'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC',
+            ],
           },
         },
         {
@@ -88,10 +124,96 @@ export class LinkedInService {
         },
       );
 
+      const uploadUrl = registerResponse.data.value.uploadMechanism[
+        'com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'
+      ].uploadUrl;
+      const asset = registerResponse.data.value.asset;
+
+      // Upload image
+      await axios.put(uploadUrl, imageBuffer, {
+        headers: {
+          'Content-Type': contentType,
+        },
+      });
+
+      this.logger.logLinkedInApi('uploadImage', true, { asset });
+      return asset;
+    } catch (error: any) {
+      this.logger.logLinkedInApi('uploadImage', false, {
+        error: error.response?.data || error.message,
+      });
+      throw new BadRequestException(
+        `Failed to upload image to LinkedIn: ${error.response?.data?.message || error.message}`,
+      );
+    }
+  }
+
+  async publishPost(
+    userId: string,
+    content: string,
+    imageUrl?: string,
+  ): Promise<LinkedInPost> {
+    const accessToken = await this.getAccessToken(userId);
+    const profile = await this.prisma.linkedinProfile.findUnique({
+      where: { userId },
+    });
+
+    try {
+      // Get person URN
+      const personUrn = `urn:li:person:${profile!.linkedinId}`;
+
+      let mediaCategory = 'NONE';
+      let media: any = undefined;
+
+      // Upload image if provided
+      if (imageUrl) {
+        const assetUrn = await this.uploadImage(userId, imageUrl);
+        mediaCategory = 'IMAGE';
+        media = {
+          status: 'READY',
+          media: assetUrn,
+          title: {
+            text: 'Post Image',
+          },
+        };
+      }
+
+      // Create post using UGC Post API
+      const shareContent: any = {
+        shareCommentary: {
+          text: content,
+        },
+        shareMediaCategory: mediaCategory,
+      };
+
+      // Add media if image is provided
+      if (media) {
+        shareContent.media = [media];
+      }
+
+      const postData: any = {
+        author: personUrn,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+          'com.linkedin.ugc.ShareContent': shareContent,
+        },
+        visibility: {
+          'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC',
+        },
+      };
+
+      const response = await this.httpClient.post('/ugcPosts', postData, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
+      });
+
       const postId = response.headers['x-restli-id'] || response.data.id;
       const postUrl = `https://www.linkedin.com/feed/update/${postId}`;
 
-      this.logger.logLinkedInApi('publishPost', true, { postId });
+      this.logger.logLinkedInApi('publishPost', true, { postId, hasImage: !!imageUrl });
 
       return {
         postId,

@@ -21,11 +21,28 @@ model User {
   updatedAt DateTime @updatedAt
 
   linkedinProfile LinkedinProfile?
+  refreshTokens   RefreshToken[]
   contents        Content[]
   schedules       Schedule[]
   analytics       Analytics[]
 
   @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("refresh_tokens")
 }
 
 model LinkedinProfile {
@@ -62,6 +79,8 @@ model Content {
   outline      String?
   rawContent   String?
   finalContent String?
+  imageUrl     String?       // URL da imagem gerada
+  imagePrompt  String?       // Prompt usado para gerar a imagem
   persona      Persona       @default(GENERAL)
   status       ContentStatus @default(DRAFT)
   version      Int           @default(1)

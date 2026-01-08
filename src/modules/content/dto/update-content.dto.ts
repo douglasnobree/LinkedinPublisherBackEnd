@@ -25,6 +25,16 @@ export class UpdateContentDto {
   @IsString()
   finalContent?: string;
 
+  @ApiPropertyOptional({ description: 'Image URL for the post' })
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Image generation prompt' })
+  @IsOptional()
+  @IsString()
+  imagePrompt?: string;
+
   @ApiPropertyOptional({ enum: Persona })
   @IsOptional()
   @IsEnum(Persona)

@@ -14,7 +14,7 @@ export interface GenerationResult {
 @Injectable()
 export class AIService {
   private genAI: GoogleGenerativeAI;
-  private model: string = 'gemini-3-flash-preview'; // Free tier model
+  private model: string = 'gemini-2.5-flash-lite'; // Free tier model
 
   constructor(
     private configService: ConfigService,
